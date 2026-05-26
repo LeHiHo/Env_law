@@ -1,0 +1,15 @@
+{
+  "name": "law-pj-0527",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "pnpm build && node --test dist/tests/**/*.test.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.57.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0"
+  }
+}

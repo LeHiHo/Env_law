@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "lib": ["ES2022", "DOM"],
+    "strict": true,
+    "noImplicitAny": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "esModuleInterop": true,
+    "rootDir": ".",
+    "outDir": "dist"
+  },
+  "include": ["app/**/*.ts", "lib/law/**/*.ts", "tests/**/*.ts"],
+  "exclude": ["dist"]
+}
