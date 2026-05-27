@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "jsx": "react-jsx",
+    "noEmit": false,
+    "rootDir": ".",
+    "outDir": "dist",
+    "plugins": [],
+    "types": ["node"],
+    "ignoreDeprecations": "6.0"
+  },
+  "include": ["app/**/*.ts", "lib/law/**/*.ts", "tests/**/*.ts"],
+  "exclude": ["node_modules", "dist", ".next", "lib/law-api.ts", "lib/types.ts"]
+}

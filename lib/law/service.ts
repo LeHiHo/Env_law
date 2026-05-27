@@ -2,7 +2,7 @@ import { createLawApiClient } from "./client";
 import { FALLBACK_LAWS, FALLBACK_WARNING, getFallbackDetail } from "./fallback";
 import { parseDetailPayload } from "./detail-parser";
 import { parseSearchPayload, parseSearchRecords } from "./search-parser";
-import type { LawApiClient, LawDetailResult, SearchFilters, SearchResult } from "./types";
+import type { LawApiClient, LawDetail, LawDetailResult, LawSummary, SearchFilters, SearchResult } from "./types";
 import { createMemoryLawRepository, createSupabaseLawRepository, type LawRepository } from "./repository";
 import { createSupabaseLawDatabaseFromEnv } from "./supabase-database";
 
@@ -76,11 +76,12 @@ async function fetchAndStoreDetail(
   client: LawApiClient,
   repository: LawRepository,
 ) {
+  const summary = await findCachedSummary(id, mst, repository);
   const raw = await client.detailById(id);
   const parsed = raw ? parseDetailPayload(raw) : undefined;
   const fallbackRaw = parsed ? undefined : await fetchMstFallback(mst, client);
   const payload = parsed ? raw : fallbackRaw;
-  const detail = parsed ?? (fallbackRaw ? parseDetailPayload(fallbackRaw) : undefined);
+  const detail = mergeDetailMeta(parsed ?? (fallbackRaw ? parseDetailPayload(fallbackRaw) : undefined), summary, mst);
 
   if (detail) {
     await repository.upsertDetail(detail, payload);
@@ -91,6 +92,38 @@ async function fetchAndStoreDetail(
 
 async function fetchMstFallback(mst: string | undefined, client: LawApiClient): Promise<unknown | undefined> {
   return mst ? client.detailByMst(mst) : undefined;
+}
+
+async function findCachedSummary(
+  id: string,
+  mst: string | undefined,
+  repository: LawRepository,
+): Promise<LawSummary | undefined> {
+  const candidates = await repository.search({});
+  return candidates.find((item) => item.id === id && (!mst || item.mst === mst)) ?? candidates.find((item) => item.id === id || item.mst === mst);
+}
+
+function mergeDetailMeta(
+  detail: LawDetail | undefined,
+  summary: LawSummary | undefined,
+  requestedMst: string | undefined,
+): LawDetail | undefined {
+  if (!detail) {
+    return undefined;
+  }
+
+  return {
+    ...detail,
+    mst: summary?.mst ?? detail.mst ?? requestedMst,
+    ministry: summary?.ministry ?? detail.ministry,
+    category: summary?.category ?? detail.category,
+    promulgationDate: summary?.promulgationDate ?? detail.promulgationDate,
+    effectiveDate: summary?.effectiveDate ?? detail.effectiveDate,
+    status: summary?.status ?? detail.status,
+    sourceLink: summary?.sourceLink ?? detail.sourceLink,
+    topicSlugs: summary?.topicSlugs.length ? summary.topicSlugs : detail.topicSlugs,
+    summary: detail.summary ?? summary?.summary,
+  };
 }
 
 function fallbackSearch(filters: SearchFilters): SearchResult {

@@ -95,6 +95,20 @@ test("service stores API search results in repository", async () => {
   assert.equal(result.items[0]?.id, "000166");
 });
 
+test("service merges cached search metadata into detail before storing", async () => {
+  const database = new FakeSupabaseLawDatabase();
+  const repository = createSupabaseLawRepository(database);
+  const service = createLawService({ client: fixtureClient(), repository });
+
+  await service.searchLaws({ query: "물환경" });
+  const result = await service.getLawDetail("000166", "283441");
+
+  assert.equal(result.item?.status, "시행예정");
+  assert.equal(result.item?.mst, "283441");
+  assert.equal(result.item?.effectiveDate, "2027-02-20");
+  assert.equal(database.laws[0]?.status, "시행예정");
+});
+
 test("service falls back to MST detail lookup when ID returns empty", async () => {
   const service = createLawService({ client: mstFallbackClient() });
   const result = await service.getLawDetail("000166", "283441");
@@ -173,6 +187,8 @@ function buildSearchPayload(): unknown {
       law: {
         법령명한글: "물환경보전법",
         소관부처명: "환경부",
+        시행일자: "20270220",
+        현행연혁코드: "시행예정",
         법령일련번호: "283441",
         법령ID: "000166",
       },

@@ -1,15 +1,24 @@
 {
   "name": "law-pj-0527",
   "private": true,
-  "type": "commonjs",
+  "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "test": "pnpm build && node --test dist/tests/**/*.test.js"
+    "build": "next build",
+    "dev": "next dev",
+    "test": "tsc -p tsconfig.test.json && node -e \"require('fs').writeFileSync('dist/package.json', '{\\\"type\\\":\\\"commonjs\\\"}')\" && node --test dist/tests/**/*.test.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.57.0"
+    "@supabase/ssr": "^0.10.3",
+    "@supabase/supabase-js": "^2.57.0",
+    "next": "^16.2.6",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6"
   },
   "devDependencies": {
-    "@types/node": "^22.15.0"
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.2.15",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "6.0.3"
   }
 }
