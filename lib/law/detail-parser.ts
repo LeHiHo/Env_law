@@ -1,5 +1,5 @@
 import { inferTopicSlugs } from "./topics";
-import type { LawArticle, LawDetail, LawSubItem, SupplementaryProvision } from "./types";
+import type { LawAnnex, LawAnnexType, LawArticle, LawDetail, LawSubItem, SupplementaryProvision } from "./types";
 import { asRecord, buildSourceLink, compactText, normalizeDateString, toLawStatus, toRecordArray, toValueArray } from "./utils";
 
 export function parseDetailPayload(payload: unknown): LawDetail | undefined {
@@ -38,6 +38,7 @@ function buildDetail(
     summary: getSummary(law) || undefined,
     articles: parseArticles(law["조문"] ?? law["조문단위"] ?? law.articleUnits),
     supplementaryProvisions: parseSupplementaryProvisions(law["부칙"] ?? law["부칙단위"]),
+    annexes: parseAnnexes(law["별표"] ?? law["별표단위"] ?? law.annexes),
   };
 }
 
@@ -111,6 +112,57 @@ function toSupplementaryProvision(unit: Record<string, unknown>, index: number):
     promulgationNumber: firstText(unit, ["부칙공포번호"]) || undefined,
     paragraphs,
   }];
+}
+
+function parseAnnexes(rawValue: unknown): LawAnnex[] {
+  const root = asRecord(rawValue);
+  const units = toRecordArray(root["별표단위"] ?? root.annexUnits ?? rawValue);
+  return units.flatMap((unit, index) => toAnnex(unit, index));
+}
+
+function toAnnex(unit: Record<string, unknown>, index: number): LawAnnex[] {
+  const title = firstText(unit, ["별표제목", "별표서식명", "제목", "title"]);
+
+  if (!title) {
+    return [];
+  }
+
+  return [{
+    key: firstText(unit, ["별표키", "별표서식키", "id"]) || `annex-${index}`,
+    type: toAnnexType(firstText(unit, ["별표구분", "별표종류", "구분"])),
+    title,
+    number: firstText(unit, ["별표번호", "번호"]) || undefined,
+    branchNumber: firstText(unit, ["별표가지번호", "가지번호"]) || undefined,
+    text: flattenText(unit["별표내용"] ?? unit["내용"]).join("\n") || undefined,
+    hwpUrl: normalizeLawUrl(firstText(unit, ["별표서식파일링크", "파일링크"])),
+    pdfUrl: normalizeLawUrl(firstText(unit, ["별표서식PDF파일링크", "PDF파일링크"])),
+  }];
+}
+
+function toAnnexType(value: string): LawAnnexType {
+  const text = compactText(value);
+
+  if (text === "1" || text.includes("별표")) {
+    return "별표";
+  }
+
+  if (text === "2" || text.includes("서식")) {
+    return "서식";
+  }
+
+  if (text === "3" || text.includes("별지")) {
+    return "별지";
+  }
+
+  return text === "4" ? "별도" : text === "5" ? "부록" : "기타";
+}
+
+function normalizeLawUrl(value: string): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  return value.startsWith("http") ? value : `https://www.law.go.kr${value}`;
 }
 
 function flattenText(value: unknown): string[] {

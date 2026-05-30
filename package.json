@@ -5,7 +5,7 @@
   "scripts": {
     "build": "next build",
     "dev": "next dev",
-    "test": "tsc -p tsconfig.test.json && node -e \"require('fs').writeFileSync('dist/package.json', '{\\\"type\\\":\\\"commonjs\\\"}')\" && node --test dist/tests/**/*.test.js",
+    "test": "tsc -p tsconfig.test.json && node -e \"const fs=require('fs');fs.mkdirSync('dist/node_modules/@',{recursive:true});for(const name of ['app','lib']){const link='dist/node_modules/@/'+name;if(!fs.existsSync(link))fs.symlinkSync('../../'+name,link,'dir')}fs.writeFileSync('dist/package.json', '{\\\"type\\\":\\\"commonjs\\\"}')\" && node --test dist/tests/**/*.test.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

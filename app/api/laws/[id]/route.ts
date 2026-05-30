@@ -1,4 +1,4 @@
-import { createLawService } from "../../../../lib/law/service";
+import { createLawService } from "@/lib/law/service";
 
 type RouteContext = {
   params: Promise<{

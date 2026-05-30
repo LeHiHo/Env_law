@@ -19,6 +19,7 @@ export function createLawApiClient(credential = process.env.LAW_API_OC): LawApiC
     search: (filters) => fetchSearch(credential, filters),
     detailById: (id) => fetchDetail(credential, { ID: id }),
     detailByMst: (mst) => fetchDetail(credential, { MST: mst }),
+    historyByTitle: (title) => fetchHistory(credential, title),
   };
 }
 
@@ -45,6 +46,16 @@ async function fetchDetail(
   return fetchJson(credential, LAW_DETAIL_ENDPOINT, { target: "law", ...identity });
 }
 
+async function fetchHistory(credential: string | undefined, title: string): Promise<string | undefined> {
+  return fetchText(credential, LAW_SEARCH_ENDPOINT, {
+    target: "lsHistory",
+    query: compactText(title),
+    display: "100",
+    page: "1",
+    sort: "efdes",
+  });
+}
+
 async function fetchJson(
   credential: string | undefined,
   endpoint: string,
@@ -61,6 +72,24 @@ async function fetchJson(
   }
 
   return response.json() as Promise<unknown>;
+}
+
+async function fetchText(
+  credential: string | undefined,
+  endpoint: string,
+  params: Record<string, string | undefined>,
+): Promise<string | undefined> {
+  if (!credential) {
+    return undefined;
+  }
+
+  const response = await fetch(buildUrl(endpoint, credential, { ...params, type: "HTML" }));
+
+  if (!response.ok) {
+    throw new LawApiError("국가법령 Open API 호출에 실패했습니다.", response.status);
+  }
+
+  return response.text();
 }
 
 function buildUrl(endpoint: string, credential: string, params: Record<string, string | undefined>): URL {

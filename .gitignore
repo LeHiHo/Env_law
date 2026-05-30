@@ -4,3 +4,6 @@ dist/
 tsconfig.tsbuildinfo
 .env.local
 .env
+db/
+docs/
+AGENTS.md

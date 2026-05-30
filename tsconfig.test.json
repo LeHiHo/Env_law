@@ -12,5 +12,5 @@
     "ignoreDeprecations": "6.0"
   },
   "include": ["app/**/*.ts", "lib/law/**/*.ts", "tests/**/*.ts"],
-  "exclude": ["node_modules", "dist", ".next", "lib/law-api.ts", "lib/types.ts"]
+  "exclude": ["node_modules", "dist", ".next", "legacy"]
 }

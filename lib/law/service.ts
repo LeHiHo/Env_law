@@ -1,8 +1,10 @@
 import { createLawApiClient } from "./client";
 import { FALLBACK_LAWS, FALLBACK_WARNING, getFallbackDetail } from "./fallback";
+import { diffArticleVersions, sortVersionsAscending } from "./article-diff";
+import { parseHistoryHtml } from "./history-parser";
 import { parseDetailPayload } from "./detail-parser";
 import { parseSearchPayload, parseSearchRecords } from "./search-parser";
-import type { LawApiClient, LawDetail, LawDetailResult, LawSummary, SearchFilters, SearchResult } from "./types";
+import type { ArticleChange, LawApiClient, LawDetail, LawDetailResult, LawHistoryItem, LawSummary, LawVersion, SearchFilters, SearchResult } from "./types";
 import { createMemoryLawRepository, createSupabaseLawRepository, type LawRepository } from "./repository";
 import { createSupabaseLawDatabaseFromEnv } from "./supabase-database";
 
@@ -20,6 +22,10 @@ export function createLawService(dependencies: LawServiceDependencies = {}) {
   return {
     searchLaws: (filters: SearchFilters) => searchLaws(filters, client, repository),
     getLawDetail: (id: string, mst?: string) => getLawDetail(id, mst, client, repository),
+    listLawVersions: (lawId: string) => listLawVersions(lawId, repository),
+    syncLawHistory: (id: string) => syncLawHistory(id, client, repository),
+    computeArticleChanges: (id: string) => computeArticleChanges(id, repository),
+    listArticleChanges: (id: string, fromMst?: string, toMst?: string) => listArticleChanges(id, fromMst, toMst, repository),
   };
 }
 
@@ -62,12 +68,102 @@ async function getLawDetail(
       return { item: detail, source: "api" };
     }
   } catch (error) {
-    const cached = await repository.getDetail(id);
+    const cached = await repository.getDetail(id, mst);
     return cached ? { item: cached, source: "db-cache", warning: getWarning(error) } : fallbackDetail(id);
   }
 
-  const cached = await repository.getDetail(id);
+  const cached = await repository.getDetail(id, mst);
   return cached ? { item: cached, source: "db-cache" } : fallbackDetail(id);
+}
+
+async function listLawVersions(lawId: string, repository: LawRepository): Promise<{ items: LawVersion[]; total: number }> {
+  const items = await repository.listVersions(lawId);
+  return { items, total: items.length };
+}
+
+async function syncLawHistory(
+  id: string,
+  client: LawApiClient,
+  repository: LawRepository,
+): Promise<{ items: LawHistoryItem[]; stored: number; skipped: number }> {
+  const base = await repository.getDetail(id);
+  const title = base?.title ?? id;
+  const html = await client.historyByTitle(title);
+  const items = html ? parseHistoryHtml(html, id, title) : [];
+  const stored = await storeMissingHistoryVersions(id, items, client, repository);
+
+  return { items, stored, skipped: items.length - stored };
+}
+
+async function computeArticleChanges(
+  lawId: string,
+  repository: LawRepository,
+): Promise<{ items: ArticleChange[]; total: number }> {
+  const versions = sortVersionsAscending(await repository.listVersions(lawId));
+  const items = (await Promise.all(versionPairs(versions).map((pair) => diffVersionPair(lawId, pair, repository))))
+    .flat()
+    .filter((item) => item.changeType !== "unchanged");
+  await repository.upsertArticleChanges(items);
+  return { items, total: items.length };
+}
+
+async function listArticleChanges(
+  lawId: string,
+  fromMst: string | undefined,
+  toMst: string | undefined,
+  repository: LawRepository,
+): Promise<{ items: ArticleChange[]; total: number }> {
+  const items = await repository.listArticleChanges({ lawId, fromMst, toMst });
+  return { items, total: items.length };
+}
+
+async function storeMissingHistoryVersions(
+  lawId: string,
+  items: LawHistoryItem[],
+  client: LawApiClient,
+  repository: LawRepository,
+): Promise<number> {
+  let stored = 0;
+  const existingMsts = new Set((await repository.listVersions(lawId)).map((version) => version.mst));
+
+  for (const item of items) {
+    stored += await storeHistoryVersion(lawId, item, existingMsts, client, repository);
+  }
+
+  return stored;
+}
+
+async function storeHistoryVersion(
+  lawId: string,
+  item: LawHistoryItem,
+  existingMsts: Set<string>,
+  client: LawApiClient,
+  repository: LawRepository,
+): Promise<number> {
+  if (existingMsts.has(item.mst)) {
+    return 0;
+  }
+
+  const raw = await client.detailByMst(item.mst);
+  const detail = mergeDetailMeta(raw ? parseDetailPayload(raw) : undefined, itemToSummary(item), item.mst);
+
+  if (!detail) {
+    return 0;
+  }
+
+  await repository.upsertDetail({ ...detail, id: lawId }, raw);
+  existingMsts.add(item.mst);
+  return 1;
+}
+
+async function diffVersionPair(
+  lawId: string,
+  pair: [LawVersion, LawVersion],
+  repository: LawRepository,
+): Promise<ArticleChange[]> {
+  const from = await repository.getDetail(lawId, pair[0].mst);
+  const to = await repository.getDetail(lawId, pair[1].mst);
+  return from && to ? diffArticleVersions(from, to) : [];
 }
 
 async function fetchAndStoreDetail(
@@ -77,9 +173,9 @@ async function fetchAndStoreDetail(
   repository: LawRepository,
 ) {
   const summary = await findCachedSummary(id, mst, repository);
-  const raw = await client.detailById(id);
+  const raw = mst ? await client.detailByMst(mst) : await client.detailById(id);
   const parsed = raw ? parseDetailPayload(raw) : undefined;
-  const fallbackRaw = parsed ? undefined : await fetchMstFallback(mst, client);
+  const fallbackRaw = parsed ? undefined : await fetchDetailFallback(id, mst, client);
   const payload = parsed ? raw : fallbackRaw;
   const detail = mergeDetailMeta(parsed ?? (fallbackRaw ? parseDetailPayload(fallbackRaw) : undefined), summary, mst);
 
@@ -90,8 +186,12 @@ async function fetchAndStoreDetail(
   return detail;
 }
 
-async function fetchMstFallback(mst: string | undefined, client: LawApiClient): Promise<unknown | undefined> {
-  return mst ? client.detailByMst(mst) : undefined;
+async function fetchDetailFallback(
+  id: string,
+  mst: string | undefined,
+  client: LawApiClient,
+): Promise<unknown | undefined> {
+  return mst ? client.detailById(id) : undefined;
 }
 
 async function findCachedSummary(
@@ -100,7 +200,25 @@ async function findCachedSummary(
   repository: LawRepository,
 ): Promise<LawSummary | undefined> {
   const candidates = await repository.search({});
-  return candidates.find((item) => item.id === id && (!mst || item.mst === mst)) ?? candidates.find((item) => item.id === id || item.mst === mst);
+  const exact = candidates.find((item) => item.id === id && (!mst || item.mst === mst));
+  return exact ?? (mst ? candidates.find((item) => item.mst === mst) : candidates.find((item) => item.id === id));
+}
+
+function itemToSummary(item: LawHistoryItem): LawSummary {
+  return {
+    id: item.lawId,
+    mst: item.mst,
+    title: item.title,
+    promulgationDate: item.promulgationDate,
+    effectiveDate: item.effectiveDate,
+    status: item.status,
+    sourceLink: item.sourceLink,
+    topicSlugs: [],
+  };
+}
+
+function versionPairs(versions: LawVersion[]): Array<[LawVersion, LawVersion]> {
+  return versions.slice(1).map((version, index) => [versions[index]!, version]);
 }
 
 function mergeDetailMeta(

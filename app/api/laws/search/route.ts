@@ -1,5 +1,5 @@
-import { createLawService } from "../../../../lib/law/service";
-import type { LawStatus, SearchFilters } from "../../../../lib/law/types";
+import { createLawService } from "@/lib/law/service";
+import type { LawStatus, SearchFilters } from "@/lib/law/types";
 
 export async function GET(request: Request): Promise<Response> {
   const searchParams = new URL(request.url).searchParams;

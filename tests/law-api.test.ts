@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { parseSearchPayload } from "../lib/law/search-parser";
+import { parseSearchPayload } from "@/lib/law/search-parser";
 
 test("law API parser keeps legacy representative search coverage", () => {
   const items = parseSearchPayload({

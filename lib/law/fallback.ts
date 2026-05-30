@@ -62,5 +62,6 @@ export function getFallbackDetail(id: string): LawDetail | undefined {
       },
     ],
     supplementaryProvisions: [],
+    annexes: [],
   };
 }
