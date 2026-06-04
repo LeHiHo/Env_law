@@ -2,6 +2,8 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 import type { JsonValue, LawAnnexType, LawRelationType, LawStatus } from "./types";
 import type {
+  AnnexChangeFilters,
+  AnnexChangeRow,
   AnnexRow,
   ArticleRow,
   LawRelationRow,
@@ -31,6 +33,7 @@ type Database = {
       law_version_supplementary_provisions: { Row: VersionProvisionDbRow; Insert: VersionProvisionDbInsert; Update: VersionProvisionDbUpdate; Relationships: [] };
       law_version_annexes: { Row: VersionAnnexDbRow; Insert: VersionAnnexDbInsert; Update: VersionAnnexDbUpdate; Relationships: [] };
       law_article_changes: { Row: ArticleChangeDbRow; Insert: ArticleChangeDbInsert; Update: ArticleChangeDbUpdate; Relationships: [] };
+      law_annex_changes: { Row: AnnexChangeDbRow; Insert: AnnexChangeDbInsert; Update: AnnexChangeDbUpdate; Relationships: [] };
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;
@@ -162,6 +165,29 @@ type ArticleChangeDbInsert = {
 };
 type ArticleChangeDbUpdate = Partial<ArticleChangeDbInsert>;
 
+type AnnexChangeDbRow = AnnexChangeDbInsert & { id: number; created_at: string; updated_at: string };
+type AnnexChangeDbInsert = {
+  law_id: string;
+  from_mst: string;
+  to_mst: string;
+  annex_match_key: string;
+  annex_type: LawAnnexType;
+  annex_number?: string | null;
+  branch_number?: string | null;
+  change_type: AnnexChangeRow["changeType"];
+  old_title?: string | null;
+  new_title?: string | null;
+  old_text?: string | null;
+  new_text?: string | null;
+  old_hwp_url?: string | null;
+  new_hwp_url?: string | null;
+  old_pdf_url?: string | null;
+  new_pdf_url?: string | null;
+  changed_fields: string[];
+  sort_order: number;
+};
+type AnnexChangeDbUpdate = Partial<AnnexChangeDbInsert>;
+
 export function createSupabaseLawDatabaseFromEnv(): SupabaseLawDatabase | undefined {
   const url = process.env.SUPABASE_URL;
   const secretKey = process.env.SUPABASE_SECRET_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -192,6 +218,8 @@ export function createSupabaseLawDatabaseFromClient(client: TypedSupabaseClient)
     listVersions: (lawId) => listVersions(client, lawId),
     upsertArticleChanges: (rows) => upsertArticleChanges(client, rows),
     listArticleChanges: (filters) => listArticleChanges(client, filters),
+    upsertAnnexChanges: (rows) => upsertAnnexChanges(client, rows),
+    listAnnexChanges: (filters) => listAnnexChanges(client, filters),
     listLaws: (filters) => listLaws(client, filters),
     getLaw: (id) => getLaw(client, id),
     getLawByMst: (mst) => getLawByMst(client, mst),
@@ -334,6 +362,39 @@ async function listArticleChanges(client: TypedSupabaseClient, filters: ArticleC
   const { data, error } = await query.order("sort_order");
   throwIfError(error);
   return (data ?? []).map(fromArticleChangeDbRow);
+}
+
+async function upsertAnnexChanges(client: TypedSupabaseClient, rows: AnnexChangeRow[]): Promise<void> {
+  if (rows.length === 0) {
+    return;
+  }
+
+  for (const chunk of chunkRows(rows, 200)) {
+    const { error } = await client
+      .from("law_annex_changes")
+      .upsert(chunk.map(toAnnexChangeDbInsert), { onConflict: "law_id,from_mst,to_mst,annex_match_key" });
+    throwIfError(error);
+  }
+}
+
+async function listAnnexChanges(client: TypedSupabaseClient, filters: AnnexChangeFilters): Promise<AnnexChangeRow[]> {
+  let query = client.from("law_annex_changes").select("*").eq("law_id", filters.lawId);
+
+  if (filters.fromMst) {
+    query = query.eq("from_mst", filters.fromMst);
+  }
+
+  if (filters.toMst) {
+    query = query.eq("to_mst", filters.toMst);
+  }
+
+  if (filters.type) {
+    query = query.eq("annex_type", filters.type);
+  }
+
+  const { data, error } = await query.order("sort_order");
+  throwIfError(error);
+  return (data ?? []).map(fromAnnexChangeDbRow);
 }
 
 async function listChildRelations(client: TypedSupabaseClient, parentLawId: string): Promise<LawRelationRow[]> {
@@ -728,6 +789,52 @@ function fromArticleChangeDbRow(row: ArticleChangeDbRow): ArticleChangeRow {
     newText: row.new_text ?? undefined,
     oldClauses: row.old_clauses ?? undefined,
     newClauses: row.new_clauses ?? undefined,
+    changedFields: row.changed_fields,
+    sortOrder: row.sort_order,
+  };
+}
+
+function toAnnexChangeDbInsert(row: AnnexChangeRow): AnnexChangeDbInsert {
+  return {
+    law_id: row.lawId,
+    from_mst: row.fromMst,
+    to_mst: row.toMst,
+    annex_match_key: row.annexMatchKey,
+    annex_type: row.annexType,
+    annex_number: row.annexNumber ?? null,
+    branch_number: row.branchNumber ?? null,
+    change_type: row.changeType,
+    old_title: row.oldTitle ?? null,
+    new_title: row.newTitle ?? null,
+    old_text: row.oldText ?? null,
+    new_text: row.newText ?? null,
+    old_hwp_url: row.oldHwpUrl ?? null,
+    new_hwp_url: row.newHwpUrl ?? null,
+    old_pdf_url: row.oldPdfUrl ?? null,
+    new_pdf_url: row.newPdfUrl ?? null,
+    changed_fields: row.changedFields,
+    sort_order: row.sortOrder,
+  };
+}
+
+function fromAnnexChangeDbRow(row: AnnexChangeDbRow): AnnexChangeRow {
+  return {
+    lawId: row.law_id,
+    fromMst: row.from_mst,
+    toMst: row.to_mst,
+    annexMatchKey: row.annex_match_key,
+    annexType: row.annex_type,
+    annexNumber: row.annex_number ?? undefined,
+    branchNumber: row.branch_number ?? undefined,
+    changeType: row.change_type,
+    oldTitle: row.old_title ?? undefined,
+    newTitle: row.new_title ?? undefined,
+    oldText: row.old_text ?? undefined,
+    newText: row.new_text ?? undefined,
+    oldHwpUrl: row.old_hwp_url ?? undefined,
+    newHwpUrl: row.new_hwp_url ?? undefined,
+    oldPdfUrl: row.old_pdf_url ?? undefined,
+    newPdfUrl: row.new_pdf_url ?? undefined,
     changedFields: row.changed_fields,
     sortOrder: row.sort_order,
   };

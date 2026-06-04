@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import { parseDetailPayload } from "@/lib/law/detail-parser";
 import { parseHistoryHtml } from "@/lib/law/history-parser";
 import {
+  type AnnexChangeFilters,
+  type AnnexChangeRow,
   type ArticleChangeFilters,
   type ArticleChangeRow,
   createSupabaseLawRepository,
@@ -22,6 +24,7 @@ import { createLawService } from "@/lib/law/service";
 import { parseSearchPayload } from "@/lib/law/search-parser";
 import type { LawApiClient } from "@/lib/law/types";
 import { normalizeDateString, toLawStatus } from "@/lib/law/utils";
+import { GET as annexesRouteGet } from "@/app/api/laws/[id]/annexes/route";
 import { GET as searchRouteGet } from "@/app/api/laws/search/route";
 
 test("parseSearchPayload reads array response fields", () => {
@@ -207,6 +210,34 @@ test("service syncs history versions and computes article changes", async () => 
   assert.equal(listed.items.length, computed.items.length);
 });
 
+test("service lists annexes and computes annex changes", async () => {
+  const database = new FakeSupabaseLawDatabase();
+  const repository = createSupabaseLawRepository(database);
+  const service = createLawService({ client: historyClient(), repository });
+  const detail = parseDetailPayload(buildDetailPayload());
+
+  if (!detail) {
+    assert.fail("expected detail document");
+  }
+
+  await repository.upsertSearchRecords([{ item: parseSearchPayload(buildSearchPayload())[0]!, raw: { fixture: true } }]);
+  await repository.upsertDetail(detail, { raw: true });
+  const current = await service.listAnnexes("000166", "별표");
+
+  await service.syncLawHistory("000166");
+
+  const version = await service.listVersionAnnexes("000166", "222222", "별표");
+  const computed = await service.computeAnnexChanges("000166");
+  const listed = await service.listAnnexChanges("000166", "111111", "222222", "별표");
+
+  assert.equal(current.items.length, 1);
+  assert.equal(version.items.length, 2);
+  assert.equal(computed.items.some((item) => item.changeType === "amended"), true);
+  assert.equal(computed.items.some((item) => item.changeType === "added"), true);
+  assert.equal(computed.items.some((item) => item.changeType === "deleted"), true);
+  assert.equal(listed.items.length, computed.items.length);
+});
+
 test("supabase repository upserts law hierarchy relations", async () => {
   const database = new FakeSupabaseLawDatabase();
   const repository = createSupabaseLawRepository(database);
@@ -234,6 +265,16 @@ test("search route returns backend search result shape", async () => {
   assert.equal(response.status, 200);
   assert.equal(body.source, "mock");
   assert.equal(body.total, 1);
+});
+
+test("annexes route returns backend annex result shape", async () => {
+  const request = new Request("http://localhost/api/laws/000162/annexes?type=별표");
+  const response = await annexesRouteGet(request, { params: Promise.resolve({ id: "000162" }) });
+  const body = await response.json() as { items?: unknown[]; total?: number };
+
+  assert.equal(response.status, 200);
+  assert.equal(Array.isArray(body.items), true);
+  assert.equal(body.total, body.items?.length);
 });
 
 function emptyClient(): LawApiClient {
@@ -346,7 +387,36 @@ function buildVersionDetailPayload(mst: string): unknown {
           },
         ],
       },
+      별표: {
+        별표단위: buildVersionAnnexUnits(mst),
+      },
     },
+  };
+}
+
+function buildVersionAnnexUnits(mst: string): unknown[] {
+  if (mst === "222222") {
+    return [
+      buildAnnexUnit("annex-1", "1", "[별표 1] 변경된 기준", "변경된 기준", "202"),
+      buildAnnexUnit("annex-3", "3", "[별표 3] 신규 기준", "새 기준", "203"),
+    ];
+  }
+
+  return [
+    buildAnnexUnit("annex-1", "1", "[별표 1] 기존 기준", "기존 기준", "101"),
+    buildAnnexUnit("annex-2", "2", "[별표 2] 삭제 기준", "삭제될 기준", "102"),
+  ];
+}
+
+function buildAnnexUnit(key: string, number: string, title: string, text: string, fileSeq: string): Record<string, string> {
+  return {
+    별표키: key,
+    별표구분: "1",
+    별표번호: number,
+    별표제목: title,
+    별표내용: text,
+    별표서식파일링크: `/LSW/flDownload.do?flSeq=${fileSeq}&gubun=`,
+    별표서식PDF파일링크: `/LSW/flDownload.do?flSeq=${fileSeq}`,
   };
 }
 
@@ -391,6 +461,7 @@ class FakeSupabaseLawDatabase implements SupabaseLawDatabase {
   versionProvisions: VersionProvisionRow[] = [];
   versionAnnexes: VersionAnnexRow[] = [];
   articleChanges: ArticleChangeRow[] = [];
+  annexChanges: AnnexChangeRow[] = [];
   relations: LawRelationRow[] = [];
   topics = new Map<string, string[]>();
 
@@ -468,6 +539,21 @@ class FakeSupabaseLawDatabase implements SupabaseLawDatabase {
       .sort(compareSortOrder);
   }
 
+  async upsertAnnexChanges(rows: AnnexChangeRow[]): Promise<void> {
+    rows.forEach((row) => {
+      this.annexChanges = [...this.annexChanges.filter((item) => annexChangeKey(item) !== annexChangeKey(row)), row];
+    });
+  }
+
+  async listAnnexChanges(filters: AnnexChangeFilters): Promise<AnnexChangeRow[]> {
+    return this.annexChanges
+      .filter((row) => row.lawId === filters.lawId)
+      .filter((row) => !filters.fromMst || row.fromMst === filters.fromMst)
+      .filter((row) => !filters.toMst || row.toMst === filters.toMst)
+      .filter((row) => !filters.type || row.annexType === filters.type)
+      .sort(compareSortOrder);
+  }
+
   async listLaws(): Promise<LawRow[]> {
     return this.laws.map((row) => ({ ...row, topicSlugs: this.topics.get(row.id) ?? [] }));
   }
@@ -524,6 +610,10 @@ function relationKey(row: LawRelationRow): string {
 
 function articleChangeKey(row: ArticleChangeRow): string {
   return `${row.lawId}:${row.fromMst}:${row.toMst}:${row.articleMatchKey}`;
+}
+
+function annexChangeKey(row: AnnexChangeRow): string {
+  return `${row.lawId}:${row.fromMst}:${row.toMst}:${row.annexMatchKey}`;
 }
 
 function compareSortOrder(a: { sortOrder: number }, b: { sortOrder: number }): number {

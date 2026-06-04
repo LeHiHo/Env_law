@@ -1,10 +1,24 @@
 import { createLawApiClient } from "./client";
 import { FALLBACK_LAWS, FALLBACK_WARNING, getFallbackDetail } from "./fallback";
+import { diffAnnexVersions } from "./annex-diff";
 import { diffArticleVersions, sortVersionsAscending } from "./article-diff";
 import { parseHistoryHtml } from "./history-parser";
 import { parseDetailPayload } from "./detail-parser";
 import { parseSearchPayload, parseSearchRecords } from "./search-parser";
-import type { ArticleChange, LawApiClient, LawDetail, LawDetailResult, LawHistoryItem, LawSummary, LawVersion, SearchFilters, SearchResult } from "./types";
+import type {
+  AnnexChange,
+  LawAnnex,
+  LawAnnexType,
+  ArticleChange,
+  LawApiClient,
+  LawDetail,
+  LawDetailResult,
+  LawHistoryItem,
+  LawSummary,
+  LawVersion,
+  SearchFilters,
+  SearchResult,
+} from "./types";
 import { createMemoryLawRepository, createSupabaseLawRepository, type LawRepository } from "./repository";
 import { createSupabaseLawDatabaseFromEnv } from "./supabase-database";
 
@@ -22,11 +36,22 @@ export function createLawService(dependencies: LawServiceDependencies = {}) {
   return {
     searchLaws: (filters: SearchFilters) => searchLaws(filters, client, repository),
     getLawDetail: (id: string, mst?: string) => getLawDetail(id, mst, client, repository),
+    listAnnexes: (id: string, type?: LawAnnexType) => listAnnexes(id, undefined, type, client, repository),
+    listVersionAnnexes: (id: string, mst: string, type?: LawAnnexType) => listAnnexes(id, mst, type, client, repository),
     listLawVersions: (lawId: string) => listLawVersions(lawId, repository),
     syncLawHistory: (id: string) => syncLawHistory(id, client, repository),
     computeArticleChanges: (id: string) => computeArticleChanges(id, repository),
     listArticleChanges: (id: string, fromMst?: string, toMst?: string) => listArticleChanges(id, fromMst, toMst, repository),
+    computeAnnexChanges: (id: string) => computeAnnexChanges(id, repository),
+    listAnnexChanges: (id: string, fromMst?: string, toMst?: string, type?: LawAnnexType) =>
+      listAnnexChanges(id, fromMst, toMst, type, repository),
   };
+}
+
+const ANNEX_TYPES: LawAnnexType[] = ["별표", "서식", "별지", "별도", "부록", "기타"];
+
+export function parseAnnexTypeFilter(value: string | null): LawAnnexType | undefined {
+  return ANNEX_TYPES.find((type) => type === value);
 }
 
 function createDefaultLawRepository(): LawRepository {
@@ -81,6 +106,18 @@ async function listLawVersions(lawId: string, repository: LawRepository): Promis
   return { items, total: items.length };
 }
 
+async function listAnnexes(
+  id: string,
+  mst: string | undefined,
+  type: LawAnnexType | undefined,
+  client: LawApiClient,
+  repository: LawRepository,
+): Promise<{ items: LawAnnex[]; total: number }> {
+  const result = await getLawDetail(id, mst, client, repository);
+  const items = filterAnnexes(result.item?.annexes ?? [], type);
+  return { items, total: items.length };
+}
+
 async function syncLawHistory(
   id: string,
   client: LawApiClient,
@@ -114,6 +151,29 @@ async function listArticleChanges(
   repository: LawRepository,
 ): Promise<{ items: ArticleChange[]; total: number }> {
   const items = await repository.listArticleChanges({ lawId, fromMst, toMst });
+  return { items, total: items.length };
+}
+
+async function computeAnnexChanges(
+  lawId: string,
+  repository: LawRepository,
+): Promise<{ items: AnnexChange[]; total: number }> {
+  const versions = sortVersionsAscending(await repository.listVersions(lawId));
+  const items = (await Promise.all(versionPairs(versions).map((pair) => diffAnnexVersionPair(lawId, pair, repository))))
+    .flat()
+    .filter((item) => item.changeType !== "unchanged");
+  await repository.upsertAnnexChanges(items);
+  return { items, total: items.length };
+}
+
+async function listAnnexChanges(
+  lawId: string,
+  fromMst: string | undefined,
+  toMst: string | undefined,
+  type: LawAnnexType | undefined,
+  repository: LawRepository,
+): Promise<{ items: AnnexChange[]; total: number }> {
+  const items = await repository.listAnnexChanges({ lawId, fromMst, toMst, type });
   return { items, total: items.length };
 }
 
@@ -164,6 +224,16 @@ async function diffVersionPair(
   const from = await repository.getDetail(lawId, pair[0].mst);
   const to = await repository.getDetail(lawId, pair[1].mst);
   return from && to ? diffArticleVersions(from, to) : [];
+}
+
+async function diffAnnexVersionPair(
+  lawId: string,
+  pair: [LawVersion, LawVersion],
+  repository: LawRepository,
+): Promise<AnnexChange[]> {
+  const from = await repository.getDetail(lawId, pair[0].mst);
+  const to = await repository.getDetail(lawId, pair[1].mst);
+  return from && to ? diffAnnexVersions(from, to) : [];
 }
 
 async function fetchAndStoreDetail(
@@ -260,6 +330,10 @@ function filterFallback(filters: SearchFilters) {
     const topicOk = !filters.topic || filters.topic === "all" || item.topicSlugs.includes(filters.topic);
     return queryOk && statusOk && topicOk;
   });
+}
+
+function filterAnnexes(items: LawAnnex[], type: LawAnnexType | undefined): LawAnnex[] {
+  return type ? items.filter((item) => item.type === type) : items;
 }
 
 function resultFromItems(
