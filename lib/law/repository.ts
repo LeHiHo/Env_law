@@ -12,6 +12,7 @@ import type {
   LawVersion,
   RawSearchRecord,
   SupplementaryProvision,
+  SupplementaryProvisionChange,
 } from "./types";
 
 export type LawRepository = {
@@ -26,6 +27,8 @@ export type LawRepository = {
   listArticleChanges(filters: ArticleChangeFilters): Promise<ArticleChange[]>;
   upsertAnnexChanges(changes: AnnexChange[]): Promise<void>;
   listAnnexChanges(filters: AnnexChangeFilters): Promise<AnnexChange[]>;
+  upsertSupplementaryProvisionChanges(changes: SupplementaryProvisionChange[]): Promise<void>;
+  listSupplementaryProvisionChanges(filters: SupplementaryProvisionChangeFilters): Promise<SupplementaryProvisionChange[]>;
   search(filters: RepositorySearchFilters): Promise<LawSummary[]>;
   getDetail(id: string, mst?: string): Promise<LawDetail | undefined>;
 };
@@ -48,6 +51,8 @@ export type AnnexChangeFilters = ArticleChangeFilters & {
   type?: LawAnnexType;
 };
 
+export type SupplementaryProvisionChangeFilters = ArticleChangeFilters;
+
 export type SupabaseLawDatabase = {
   upsertLaws(rows: LawRow[]): Promise<void>;
   replaceLawTopics(lawId: string, topicSlugs: string[]): Promise<void>;
@@ -67,6 +72,8 @@ export type SupabaseLawDatabase = {
   listArticleChanges(filters: ArticleChangeFilters): Promise<ArticleChangeRow[]>;
   upsertAnnexChanges(rows: AnnexChangeRow[]): Promise<void>;
   listAnnexChanges(filters: AnnexChangeFilters): Promise<AnnexChangeRow[]>;
+  upsertSupplementaryProvisionChanges(rows: SupplementaryProvisionChangeRow[]): Promise<void>;
+  listSupplementaryProvisionChanges(filters: SupplementaryProvisionChangeFilters): Promise<SupplementaryProvisionChangeRow[]>;
   listLaws(filters: RepositorySearchFilters): Promise<LawRow[]>;
   getLaw(id: string): Promise<LawRow | undefined>;
   getLawByMst(mst: string): Promise<LawRow | undefined>;
@@ -144,6 +151,7 @@ export type VersionProvisionRow = Omit<ProvisionRow, "lawId"> & { mst: string };
 export type VersionAnnexRow = Omit<AnnexRow, "lawId"> & { mst: string };
 export type ArticleChangeRow = ArticleChange;
 export type AnnexChangeRow = AnnexChange;
+export type SupplementaryProvisionChangeRow = SupplementaryProvisionChange;
 
 export function createMemoryLawRepository(): LawRepository {
   const summaries = new Map<string, LawSummary>();
@@ -152,6 +160,7 @@ export function createMemoryLawRepository(): LawRepository {
   const relations = new Map<string, LawRelation>();
   const articleChanges = new Map<string, ArticleChange>();
   const annexChanges = new Map<string, AnnexChange>();
+  const provisionChanges = new Map<string, SupplementaryProvisionChange>();
 
   return {
     upsertSearchRecords: async (records) => {
@@ -179,6 +188,10 @@ export function createMemoryLawRepository(): LawRepository {
       rows.forEach((row) => annexChanges.set(annexChangeKey(row), row));
     },
     listAnnexChanges: async (filters) => filterAnnexChanges([...annexChanges.values()], filters),
+    upsertSupplementaryProvisionChanges: async (rows) => {
+      rows.forEach((row) => provisionChanges.set(provisionChangeKey(row), row));
+    },
+    listSupplementaryProvisionChanges: async (filters) => filterProvisionChanges([...provisionChanges.values()], filters),
     search: async (filters) => filterSummaries([...summaries.values()], filters),
     getDetail: async (id, mst) => (mst ? versions.get(mst) : undefined) ?? details.get(id) ?? findByMst(details, id),
   };
@@ -214,6 +227,8 @@ export function createSupabaseLawRepository(database: SupabaseLawDatabase): LawR
     listArticleChanges: async (filters) => database.listArticleChanges(filters),
     upsertAnnexChanges: async (changes) => database.upsertAnnexChanges(changes),
     listAnnexChanges: async (filters) => database.listAnnexChanges(filters),
+    upsertSupplementaryProvisionChanges: async (changes) => database.upsertSupplementaryProvisionChanges(changes),
+    listSupplementaryProvisionChanges: async (filters) => database.listSupplementaryProvisionChanges(filters),
     search: async (filters) => {
       const rows = await database.listLaws(filters);
       return rows.map(fromLawRow);
@@ -308,6 +323,10 @@ function annexChangeKey(row: AnnexChange): string {
   return `${row.lawId}:${row.fromMst}:${row.toMst}:${row.annexMatchKey}`;
 }
 
+function provisionChangeKey(row: SupplementaryProvisionChange): string {
+  return `${row.lawId}:${row.fromMst}:${row.toMst}:${row.provisionMatchKey}`;
+}
+
 function filterArticleChanges(items: ArticleChange[], filters: ArticleChangeFilters): ArticleChange[] {
   return items
     .filter((item) => item.lawId === filters.lawId)
@@ -322,6 +341,17 @@ function filterAnnexChanges(items: AnnexChange[], filters: AnnexChangeFilters): 
     .filter((item) => !filters.fromMst || item.fromMst === filters.fromMst)
     .filter((item) => !filters.toMst || item.toMst === filters.toMst)
     .filter((item) => !filters.type || item.annexType === filters.type)
+    .sort(compareSortOrder);
+}
+
+function filterProvisionChanges(
+  items: SupplementaryProvisionChange[],
+  filters: SupplementaryProvisionChangeFilters,
+): SupplementaryProvisionChange[] {
+  return items
+    .filter((item) => item.lawId === filters.lawId)
+    .filter((item) => !filters.fromMst || item.fromMst === filters.fromMst)
+    .filter((item) => !filters.toMst || item.toMst === filters.toMst)
     .sort(compareSortOrder);
 }
 

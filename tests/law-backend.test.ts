@@ -16,6 +16,8 @@ import {
   type LawVersionRow,
   type ProvisionRow,
   type SupabaseLawDatabase,
+  type SupplementaryProvisionChangeFilters,
+  type SupplementaryProvisionChangeRow,
   type VersionAnnexRow,
   type VersionArticleRow,
   type VersionProvisionRow,
@@ -26,6 +28,7 @@ import type { LawApiClient } from "@/lib/law/types";
 import { normalizeDateString, toLawStatus } from "@/lib/law/utils";
 import { GET as annexesRouteGet } from "@/app/api/laws/[id]/annexes/route";
 import { GET as searchRouteGet } from "@/app/api/laws/search/route";
+import { GET as supplementaryProvisionsRouteGet } from "@/app/api/laws/[id]/supplementary-provisions/route";
 
 test("parseSearchPayload reads array response fields", () => {
   const items = parseSearchPayload({
@@ -238,6 +241,34 @@ test("service lists annexes and computes annex changes", async () => {
   assert.equal(listed.items.length, computed.items.length);
 });
 
+test("service lists provisions and computes provision changes", async () => {
+  const database = new FakeSupabaseLawDatabase();
+  const repository = createSupabaseLawRepository(database);
+  const service = createLawService({ client: historyClient(), repository });
+  const detail = parseDetailPayload(buildDetailPayload());
+
+  if (!detail) {
+    assert.fail("expected detail document");
+  }
+
+  await repository.upsertSearchRecords([{ item: parseSearchPayload(buildSearchPayload())[0]!, raw: { fixture: true } }]);
+  await repository.upsertDetail(detail, { raw: true });
+  const current = await service.listSupplementaryProvisions("000166");
+
+  await service.syncLawHistory("000166");
+
+  const version = await service.listVersionSupplementaryProvisions("000166", "222222");
+  const computed = await service.computeSupplementaryProvisionChanges("000166");
+  const listed = await service.listSupplementaryProvisionChanges("000166", "111111", "222222");
+
+  assert.equal(current.items.length, 1);
+  assert.equal(version.items.length, 2);
+  assert.equal(computed.items.some((item) => item.changeType === "amended"), true);
+  assert.equal(computed.items.some((item) => item.changeType === "added"), true);
+  assert.equal(computed.items.some((item) => item.changeType === "deleted"), true);
+  assert.equal(listed.items.length, computed.items.length);
+});
+
 test("supabase repository upserts law hierarchy relations", async () => {
   const database = new FakeSupabaseLawDatabase();
   const repository = createSupabaseLawRepository(database);
@@ -270,6 +301,16 @@ test("search route returns backend search result shape", async () => {
 test("annexes route returns backend annex result shape", async () => {
   const request = new Request("http://localhost/api/laws/000162/annexes?type=별표");
   const response = await annexesRouteGet(request, { params: Promise.resolve({ id: "000162" }) });
+  const body = await response.json() as { items?: unknown[]; total?: number };
+
+  assert.equal(response.status, 200);
+  assert.equal(Array.isArray(body.items), true);
+  assert.equal(body.total, body.items?.length);
+});
+
+test("supplementary provisions route returns backend result shape", async () => {
+  const request = new Request("http://localhost/api/laws/000162/supplementary-provisions");
+  const response = await supplementaryProvisionsRouteGet(request, { params: Promise.resolve({ id: "000162" }) });
   const body = await response.json() as { items?: unknown[]; total?: number };
 
   assert.equal(response.status, 200);
@@ -387,10 +428,43 @@ function buildVersionDetailPayload(mst: string): unknown {
           },
         ],
       },
+      부칙: {
+        부칙단위: buildVersionProvisionUnits(mst),
+      },
       별표: {
         별표단위: buildVersionAnnexUnits(mst),
       },
     },
+  };
+}
+
+function buildVersionProvisionUnits(mst: string): unknown[] {
+  if (mst === "222222") {
+    return [
+      buildProvisionUnit("supp-1", "20250101", "제123호", "시행일 변경", "이 법은 2026년 1월 1일부터 시행한다."),
+      buildProvisionUnit("supp-3", "20260101", "제124호", "신설 부칙", "신설 부칙은 공포한 날부터 시행한다."),
+    ];
+  }
+
+  return [
+    buildProvisionUnit("supp-1", "20250101", "제123호", "시행일", "이 법은 2025년 10월 1일부터 시행한다."),
+    buildProvisionUnit("supp-2", "20240101", "제122호", "삭제 부칙", "삭제될 부칙이다."),
+  ];
+}
+
+function buildProvisionUnit(
+  key: string,
+  date: string,
+  number: string,
+  title: string,
+  text: string,
+): Record<string, string | string[]> {
+  return {
+    부칙키: key,
+    부칙제목: title,
+    부칙공포일자: date,
+    부칙공포번호: number,
+    부칙내용: [text],
   };
 }
 
@@ -462,6 +536,7 @@ class FakeSupabaseLawDatabase implements SupabaseLawDatabase {
   versionAnnexes: VersionAnnexRow[] = [];
   articleChanges: ArticleChangeRow[] = [];
   annexChanges: AnnexChangeRow[] = [];
+  provisionChanges: SupplementaryProvisionChangeRow[] = [];
   relations: LawRelationRow[] = [];
   topics = new Map<string, string[]>();
 
@@ -554,6 +629,22 @@ class FakeSupabaseLawDatabase implements SupabaseLawDatabase {
       .sort(compareSortOrder);
   }
 
+  async upsertSupplementaryProvisionChanges(rows: SupplementaryProvisionChangeRow[]): Promise<void> {
+    rows.forEach((row) => {
+      this.provisionChanges = [...this.provisionChanges.filter((item) => provisionChangeKey(item) !== provisionChangeKey(row)), row];
+    });
+  }
+
+  async listSupplementaryProvisionChanges(
+    filters: SupplementaryProvisionChangeFilters,
+  ): Promise<SupplementaryProvisionChangeRow[]> {
+    return this.provisionChanges
+      .filter((row) => row.lawId === filters.lawId)
+      .filter((row) => !filters.fromMst || row.fromMst === filters.fromMst)
+      .filter((row) => !filters.toMst || row.toMst === filters.toMst)
+      .sort(compareSortOrder);
+  }
+
   async listLaws(): Promise<LawRow[]> {
     return this.laws.map((row) => ({ ...row, topicSlugs: this.topics.get(row.id) ?? [] }));
   }
@@ -614,6 +705,10 @@ function articleChangeKey(row: ArticleChangeRow): string {
 
 function annexChangeKey(row: AnnexChangeRow): string {
   return `${row.lawId}:${row.fromMst}:${row.toMst}:${row.annexMatchKey}`;
+}
+
+function provisionChangeKey(row: SupplementaryProvisionChangeRow): string {
+  return `${row.lawId}:${row.fromMst}:${row.toMst}:${row.provisionMatchKey}`;
 }
 
 function compareSortOrder(a: { sortOrder: number }, b: { sortOrder: number }): number {

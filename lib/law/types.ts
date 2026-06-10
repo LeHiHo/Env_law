@@ -86,6 +86,7 @@ export type LawHistoryItem = LawVersion & {
 
 export type ArticleChangeType = "added" | "deleted" | "amended" | "unchanged";
 export type AnnexChangeType = ArticleChangeType;
+export type SupplementaryProvisionChangeType = ArticleChangeType;
 
 export type ArticleChange = {
   lawId: string;
@@ -121,6 +122,24 @@ export type AnnexChange = {
   newHwpUrl?: string;
   oldPdfUrl?: string;
   newPdfUrl?: string;
+  changedFields: string[];
+  sortOrder: number;
+};
+
+export type SupplementaryProvisionChange = {
+  lawId: string;
+  fromMst: string;
+  toMst: string;
+  provisionMatchKey: string;
+  changeType: SupplementaryProvisionChangeType;
+  oldTitle?: string;
+  newTitle?: string;
+  oldPromulgationDate?: string;
+  newPromulgationDate?: string;
+  oldPromulgationNumber?: string;
+  newPromulgationNumber?: string;
+  oldParagraphs?: JsonValue;
+  newParagraphs?: JsonValue;
   changedFields: string[];
   sortOrder: number;
 };

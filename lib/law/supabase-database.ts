@@ -12,6 +12,8 @@ import type {
   ProvisionRow,
   RepositorySearchFilters,
   SupabaseLawDatabase,
+  SupplementaryProvisionChangeFilters,
+  SupplementaryProvisionChangeRow,
   VersionAnnexRow,
   ArticleChangeFilters,
   ArticleChangeRow,
@@ -34,6 +36,12 @@ type Database = {
       law_version_annexes: { Row: VersionAnnexDbRow; Insert: VersionAnnexDbInsert; Update: VersionAnnexDbUpdate; Relationships: [] };
       law_article_changes: { Row: ArticleChangeDbRow; Insert: ArticleChangeDbInsert; Update: ArticleChangeDbUpdate; Relationships: [] };
       law_annex_changes: { Row: AnnexChangeDbRow; Insert: AnnexChangeDbInsert; Update: AnnexChangeDbUpdate; Relationships: [] };
+      law_supplementary_provision_changes: {
+        Row: ProvisionChangeDbRow;
+        Insert: ProvisionChangeDbInsert;
+        Update: ProvisionChangeDbUpdate;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;
@@ -188,6 +196,26 @@ type AnnexChangeDbInsert = {
 };
 type AnnexChangeDbUpdate = Partial<AnnexChangeDbInsert>;
 
+type ProvisionChangeDbRow = ProvisionChangeDbInsert & { id: number; created_at: string; updated_at: string };
+type ProvisionChangeDbInsert = {
+  law_id: string;
+  from_mst: string;
+  to_mst: string;
+  provision_match_key: string;
+  change_type: SupplementaryProvisionChangeRow["changeType"];
+  old_title?: string | null;
+  new_title?: string | null;
+  old_promulgation_date?: string | null;
+  new_promulgation_date?: string | null;
+  old_promulgation_number?: string | null;
+  new_promulgation_number?: string | null;
+  old_paragraphs?: JsonValue | null;
+  new_paragraphs?: JsonValue | null;
+  changed_fields: string[];
+  sort_order: number;
+};
+type ProvisionChangeDbUpdate = Partial<ProvisionChangeDbInsert>;
+
 export function createSupabaseLawDatabaseFromEnv(): SupabaseLawDatabase | undefined {
   const url = process.env.SUPABASE_URL;
   const secretKey = process.env.SUPABASE_SECRET_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -220,6 +248,8 @@ export function createSupabaseLawDatabaseFromClient(client: TypedSupabaseClient)
     listArticleChanges: (filters) => listArticleChanges(client, filters),
     upsertAnnexChanges: (rows) => upsertAnnexChanges(client, rows),
     listAnnexChanges: (filters) => listAnnexChanges(client, filters),
+    upsertSupplementaryProvisionChanges: (rows) => upsertProvisionChanges(client, rows),
+    listSupplementaryProvisionChanges: (filters) => listProvisionChanges(client, filters),
     listLaws: (filters) => listLaws(client, filters),
     getLaw: (id) => getLaw(client, id),
     getLawByMst: (mst) => getLawByMst(client, mst),
@@ -395,6 +425,38 @@ async function listAnnexChanges(client: TypedSupabaseClient, filters: AnnexChang
   const { data, error } = await query.order("sort_order");
   throwIfError(error);
   return (data ?? []).map(fromAnnexChangeDbRow);
+}
+
+async function upsertProvisionChanges(client: TypedSupabaseClient, rows: SupplementaryProvisionChangeRow[]): Promise<void> {
+  if (rows.length === 0) {
+    return;
+  }
+
+  for (const chunk of chunkRows(rows, 200)) {
+    const { error } = await client
+      .from("law_supplementary_provision_changes")
+      .upsert(chunk.map(toProvisionChangeDbInsert), { onConflict: "law_id,from_mst,to_mst,provision_match_key" });
+    throwIfError(error);
+  }
+}
+
+async function listProvisionChanges(
+  client: TypedSupabaseClient,
+  filters: SupplementaryProvisionChangeFilters,
+): Promise<SupplementaryProvisionChangeRow[]> {
+  let query = client.from("law_supplementary_provision_changes").select("*").eq("law_id", filters.lawId);
+
+  if (filters.fromMst) {
+    query = query.eq("from_mst", filters.fromMst);
+  }
+
+  if (filters.toMst) {
+    query = query.eq("to_mst", filters.toMst);
+  }
+
+  const { data, error } = await query.order("sort_order");
+  throwIfError(error);
+  return (data ?? []).map(fromProvisionChangeDbRow);
 }
 
 async function listChildRelations(client: TypedSupabaseClient, parentLawId: string): Promise<LawRelationRow[]> {
@@ -835,6 +897,46 @@ function fromAnnexChangeDbRow(row: AnnexChangeDbRow): AnnexChangeRow {
     newHwpUrl: row.new_hwp_url ?? undefined,
     oldPdfUrl: row.old_pdf_url ?? undefined,
     newPdfUrl: row.new_pdf_url ?? undefined,
+    changedFields: row.changed_fields,
+    sortOrder: row.sort_order,
+  };
+}
+
+function toProvisionChangeDbInsert(row: SupplementaryProvisionChangeRow): ProvisionChangeDbInsert {
+  return {
+    law_id: row.lawId,
+    from_mst: row.fromMst,
+    to_mst: row.toMst,
+    provision_match_key: row.provisionMatchKey,
+    change_type: row.changeType,
+    old_title: row.oldTitle ?? null,
+    new_title: row.newTitle ?? null,
+    old_promulgation_date: row.oldPromulgationDate ?? null,
+    new_promulgation_date: row.newPromulgationDate ?? null,
+    old_promulgation_number: row.oldPromulgationNumber ?? null,
+    new_promulgation_number: row.newPromulgationNumber ?? null,
+    old_paragraphs: row.oldParagraphs ?? null,
+    new_paragraphs: row.newParagraphs ?? null,
+    changed_fields: row.changedFields,
+    sort_order: row.sortOrder,
+  };
+}
+
+function fromProvisionChangeDbRow(row: ProvisionChangeDbRow): SupplementaryProvisionChangeRow {
+  return {
+    lawId: row.law_id,
+    fromMst: row.from_mst,
+    toMst: row.to_mst,
+    provisionMatchKey: row.provision_match_key,
+    changeType: row.change_type,
+    oldTitle: row.old_title ?? undefined,
+    newTitle: row.new_title ?? undefined,
+    oldPromulgationDate: row.old_promulgation_date ?? undefined,
+    newPromulgationDate: row.new_promulgation_date ?? undefined,
+    oldPromulgationNumber: row.old_promulgation_number ?? undefined,
+    newPromulgationNumber: row.new_promulgation_number ?? undefined,
+    oldParagraphs: row.old_paragraphs ?? undefined,
+    newParagraphs: row.new_paragraphs ?? undefined,
     changedFields: row.changed_fields,
     sortOrder: row.sort_order,
   };

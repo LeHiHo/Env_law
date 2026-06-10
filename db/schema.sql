@@ -275,6 +275,36 @@ create index law_annex_changes_law_id_pair_sort_order_idx
 create index law_annex_changes_annex_type_idx on law_annex_changes (annex_type);
 create index law_annex_changes_change_type_idx on law_annex_changes (change_type);
 
+create table law_supplementary_provision_changes (
+  id bigserial primary key,
+  law_id text not null references laws(id) on delete cascade,
+  from_mst text not null references law_versions(mst) on delete cascade,
+  to_mst text not null references law_versions(mst) on delete cascade,
+  provision_match_key text not null,
+  change_type text not null,
+  old_title text,
+  new_title text,
+  old_promulgation_date date,
+  new_promulgation_date date,
+  old_promulgation_number text,
+  new_promulgation_number text,
+  old_paragraphs jsonb,
+  new_paragraphs jsonb,
+  changed_fields text[] not null default '{}',
+  sort_order integer not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (law_id, from_mst, to_mst, provision_match_key)
+);
+
+alter table law_supplementary_provision_changes enable row level security;
+
+create index law_supplementary_provision_changes_law_id_pair_sort_order_idx
+  on law_supplementary_provision_changes (law_id, from_mst, to_mst, sort_order);
+
+create index law_supplementary_provision_changes_change_type_idx
+  on law_supplementary_provision_changes (change_type);
+
 create table law_annotations (
   law_id text primary key references laws(id) on delete cascade,
   plain_summary text,
